@@ -9,6 +9,12 @@ import tempfile
 import numpy as np
 from scipy.io.wavfile import write
 import gradio as gr
+import assemblyai as aai
+import openai  # Import OpenAI library
+
+from elevenlabs import clone, generate, play, stream, set_api_key
+
+set_api_key("cedcbf1991539f9c825a9346e1b7b708")
 import mimetypes
 from gradio.components import Audio, Textbox, Radio
 from gradio.components import Audio as AudioInput
@@ -17,6 +23,36 @@ from gradio.components import Textbox as TextboxOutput
 
 APP_KEY = "6lWL15cmmm5y5hLYU8-MvQ=="
 APP_SECRET = "xoXvx_qwuD5HczjnEYOC9OJj6HGCZDFZBHKHEegigHA="
+
+aai.settings.api_key = "6c7f4d60028e4df9b889b93acb8ed698"
+
+openai.api_key = (
+    "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"  # Set OpenAI API key
+)
+
+
+def transcribe_audio_openai(file_path):
+    # Transcribe audio using OpenAI's Whisper ASR system
+    with open(file_path, "rb") as audio_file:
+        transcript = openai.Audio.transcribe("whisper-1", audio_file)
+    return transcript["text"]
+
+
+def clone_and_stream_voice(name, description, labels, text, model):
+    voice = clone(
+        name=name, description=description, files=["output.wav"], labels=labels
+    )
+
+    audio = generate(
+        text=text,
+        voice=voice,
+        model=model,
+        stream=True,
+        stream_chunk_size=2048,
+        latency=1,
+    )
+
+    stream(audio)
 
 
 def get_access_token():
@@ -135,34 +171,70 @@ audio_type_mapping = {
 from gradio import Checkbox
 
 
-def combined_function(recording, upload, audio_type, proceed_to_clone):
+def combined_function(
+    recording,
+    upload,
+    audio_type,
+    proceed_to_clone,
+    name,
+    description,
+    accent,
+    age,
+    gender,
+    use_case,
+    model,
+):
+    labels = {
+        "accent": accent,
+        "description": description,
+        "age": age,
+        "gender": gender,
+        "use case": use_case,
+    }
     input_file, output_file, status1 = enhance_audio(recording, upload, audio_type)
     status1 = "Enhancement complete!"
+    transcript = transcribe_audio_openai(output_file)
     if proceed_to_clone:
-        cloned_voice_file, status2 = clone_voice(output_file)
+        clone_and_stream_voice(name, description, labels, transcript, model)
         status2 = "Cloning complete!"
     else:
-        cloned_voice_file, status2 = None, "Voice cloning not performed."
-    return input_file, output_file, status1, cloned_voice_file, status2
+        status2 = "Voice cloning not performed."
+    return input_file, output_file, status1, transcript, status2
 
 
-iface = gr.Interface(
-    fn=combined_function,
-    inputs=[
-        Audio(source="microphone", label="Recorded Audio"),
-        Audio(source="upload", label="Uploaded Audio"),
-        Radio(choices=list(audio_type_mapping.keys()), label="Audio Type"),
-        Checkbox(label="Proceed to Clone Voice"),
-    ],
-    outputs=[
-        Audio(type="filepath", label="Original Audio"),
-        Audio(type="filepath", label="Processed Audio"),
-        Textbox(label="Enhancement Status"),
-        Audio(type="filepath", label="Cloned Voice"),
-        Textbox(label="Cloning Status"),
-    ],
-    title="Audio Enhancer and Voice Cloner",
-    description="Enhance your audio and clone voices using the Dolby API",
-)
+def main():
+    iface = gr.Interface(
+        fn=combined_function,
+        inputs=[
+            Audio(source="microphone", label="Recorded Audio"),
+            Audio(source="upload", label="Uploaded Audio"),
+            Radio(choices=list(audio_type_mapping.keys()), label="Audio Type"),
+            Checkbox(label="Proceed to Clone Voice"),
+            Textbox(label="Name"),
+            Textbox(label="Description"),
+            Textbox(label="Accent"),
+            Textbox(label="Age"),
+            Textbox(label="Gender"),
+            Textbox(label="Use Case"),
+            Radio(
+                choices=["eleven_monolingual_v1", "eleven_multilingual_v1"],
+                label="Model",
+            ),
+        ],
+        outputs=[
+            Audio(type="filepath", label="Original Audio"),
+            Audio(type="filepath", label="Processed Audio"),
+            Textbox(label="Enhancement Status"),
+            Textbox(label="Transcript"),
+            Textbox(label="Cloning Status"),
+        ],
+        title="Audio Enhancer, Transcriber and Voice Cloner",
+        description="Enhance your audio, transcribe it and clone voices using the Dolby API",
+        allow_flagging="never",
+    )
 
-iface.launch(inbrowser=True)
+    iface.launch(inbrowser=True, share=True)
+
+
+if __name__ == "__main__":
+    main()
