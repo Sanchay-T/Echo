@@ -1,0 +1,6 @@
+langchain
+openai
+sounddevice
+soundfile
+keyboard
+elevenlabs
