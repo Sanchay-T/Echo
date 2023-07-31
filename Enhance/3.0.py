@@ -266,6 +266,14 @@ def combined_function(
     return voice
 
 
+def user_text():
+    pass
+
+
+def user_audio():
+    pass
+
+
 def main():
     iface = gr.Interface(
         fn=combined_function,

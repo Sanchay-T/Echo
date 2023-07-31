@@ -1,0 +1,72 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        .voice-assistant {
+            width: 100px;
+            height: 100px;
+            background: #a0c0f0;
+            border-radius: 50%;
+            animation: pulse 1s infinite;
+        }
+
+        @keyframes pulse {
+            0% {
+                transform: scale(0.95);
+                opacity: 1;
+            }
+            100% {
+                transform: scale(1);
+                opacity: 0.3;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="voice-assistant" class="voice-assistant"></div>
+
+    <script>
+        const socket = new WebSocket('ws://your-server.com/socket');
+        const voiceAssistant = document.getElementById('voice-assistant');
+        let mediaRecorder;
+
+        socket.onmessage = (event) => {
+            // Play the audio response when received from the server
+            const audioBlob = new Blob([event.data]);
+            const audioUrl = URL.createObjectURL(audioBlob);
+            const audio = new Audio(audioUrl);
+            audio.play();
+
+            // Stop the animation
+            voiceAssistant.classList.remove('pulse');
+        };
+
+        navigator.mediaDevices.getUserMedia({ audio: true })
+            .then(stream => {
+                mediaRecorder = new MediaRecorder(stream);
+
+                mediaRecorder.onstart = () => {
+                    // Start the animation
+                    voiceAssistant.classList.add('pulse');
+                };
+
+                mediaRecorder.ondataavailable = (event) => {
+                    // Send the audio data to the server when available
+                    socket.send(event.data);
+                };
+            })
+            .catch(error => {
+                console.error('Error accessing audio', error);
+            });
+
+        // Start recording when the user interacts with the assistant
+        voiceAssistant.onclick = () => {
+            if (mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            } else {
+                mediaRecorder.start();
+            }
+        };
+    </script>
+</body>
+</html>
