@@ -18,18 +18,21 @@ from langchain.utilities.zapier import ZapierNLAWrapper
 
 stop_flag = True
 
+
 def set_stop_flag(e):
     global stop_flag
     stop_flag = True
 
-keyboard.on_press_key('c', set_stop_flag)
+
+keyboard.on_press_key("c", set_stop_flag)
 
 set_api_key("dcb21c9f4a8176f2f19148f63cde21e4")
-openai.api_key = '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'
+openai.api_key = "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"
 
 duration = 15  # duration of each recording in seconds
 fs = 44100  # sample rate
 channels = 1  # number of channels
+
 
 def record_audio(duration, fs, channels):
     print("Recording...")
@@ -53,8 +56,12 @@ def play_generated_audio(text, voice="Bella", model="eleven_monolingual_v1"):
     audio = generate(text=text, voice=voice, model=model)
     play(audio)
 
-if __name__ == '__main__':
-    llm = OpenAI(openai_api_key='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', temperature=0)
+
+if __name__ == "__main__":
+    llm = OpenAI(
+        openai_api_key="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",
+        temperature=0,
+    )
 
     memory = ConversationBufferMemory(memory_key="chat_history")
 
@@ -63,7 +70,13 @@ if __name__ == '__main__':
 
     tools = toolkit.get_tools() + load_tools(["human"])
 
-    agent = initialize_agent(tools, llm, memory=memory, agent="conversational-react-description", verbose=True)
+    agent = initialize_agent(
+        tools,
+        llm,
+        memory=memory,
+        agent="conversational-react-description",
+        verbose=True,
+    )
 
     while not stop_flag:  # checking the stop_flag in loop condition
         print("Press spacebar to start recording.")

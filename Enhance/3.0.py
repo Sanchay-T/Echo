@@ -1,58 +1,123 @@
+# Standard library imports
 import os
-import requests
-import json
 import time
 import shutil
-import sounddevice as sd
-import mimetypes
 import tempfile
+from dotenv import load_dotenv
+
+# Third party imports
+import requests
 import numpy as np
-from scipy.io.wavfile import write
 import gradio as gr
 import assemblyai as aai
-import openai  # Import OpenAI library
-
+import sounddevice as sd
+import openai
+from scipy.io.wavfile import write
+from gradio.components import Audio, Textbox, Radio, Checkbox
 from elevenlabs import clone, generate, play, stream, set_api_key
 
-set_api_key("cedcbf1991539f9c825a9346e1b7b708")
-import mimetypes
-from gradio.components import Audio, Textbox, Radio
-from gradio.components import Audio as AudioInput
-from gradio.components import Audio as AudioOutput
-from gradio.components import Textbox as TextboxOutput
-
-APP_KEY = "6lWL15cmmm5y5hLYU8-MvQ=="
-APP_SECRET = "xoXvx_qwuD5HczjnEYOC9OJj6HGCZDFZBHKHEegigHA="
-
-aai.settings.api_key = "6c7f4d60028e4df9b889b93acb8ed698"
-
-openai.api_key = (
-    "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"  # Set OpenAI API key
-)
-
-
-def transcribe_audio_openai(file_path):
-    # Transcribe audio using OpenAI's Whisper ASR system
-    with open(file_path, "rb") as audio_file:
-        transcript = openai.Audio.transcribe("whisper-1", audio_file)
-    return transcript["text"]
+# Local application imports
+load_dotenv()
+# Set API keys
+set_api_key(os.getenv("ELEVENLABS_API_KEY"))
+aai.settings.api_key = os.getenv("ASSEMBLYAI_API_KEY")
+openai.api_key = os.getenv("OPENAI_API_KEY")
+APP_KEY = os.getenv("DOLBY_APP_KEY")
+APP_SECRET = os.getenv("DOLBY_APP_SECRET")
+# Define constants
+AUDIO_TYPE_MAPPING = {
+    "Conference": "conference",
+    "Interview": "interview",
+    "Lecture": "lecture",
+    "Meeting": "meeting",
+    "Mobile Phone": "mobile_phone",
+    "Music": "music",
+    "Podcast": "podcast",
+    "Studio": "studio",
+    "Voice Over": "voice_over",
+}
 
 
-def clone_and_stream_voice(name, description, labels, text, model):
+cloned_voice = None
+
+
+class ChatWrapper:
+    def __init__(self, generate_speech, generate_text):
+        self.lock = Lock()
+        self.generate_speech = generate_speech
+        self.generate_text = generate_text
+        self.s2t_processor_ref = bentoml.models.get("whisper_processor:latest")
+        self.processor = bentoml.transformers.load_model(self.s2t_processor_ref)
+
+    def __call__(
+        self,
+        api_key: str,
+        audio_path: str,
+        text_message: str,
+        history: Optional[Tuple[str, str]],
+        chain: Optional[ConversationChain],
+    ):
+        """Execute the chat functionality."""
+        self.lock.acquire()
+
+        print(f"audio_path : {audio_path} ({type(audio_path)})")
+        print(f"text_message : {text_message} ({type(text_message)})")
+
+        try:
+            if audio_path is None and text_message is not None:
+                transcription = text_message
+            elif audio_path is not None and text_message in [None, ""]:
+                audio_dataset = Dataset.from_dict({"audio": [audio_path]}).cast_column(
+                    "audio",
+                    Audio(sampling_rate=16000),
+                )
+                sample = audio_dataset[0]["audio"]
+
+                if sample is not None:
+                    input_features = self.processor(
+                        sample["array"],
+                        sampling_rate=sample["sampling_rate"],
+                        return_tensors="pt",
+                    ).input_features
+
+                    transcription = self.generate_text(input_features)
+                else:
+                    transcription = None
+                    speech = None
+
+            if transcription is not None:
+                history = history or []
+                # If chain is None, that is because no API key was provided.
+                if chain is None:
+                    response = "Please paste your Open AI key."
+                    history.append((transcription, response))
+                    speech = (PLAYBACK_SAMPLE_RATE, self.generate_speech(response))
+                    return history, history, speech, None, None
+                # Set OpenAI key
+                import openai
+
+                openai.api_key = api_key
+                # Run chain and append input.
+                output = chain.run(input=transcription)
+                speech = (PLAYBACK_SAMPLE_RATE, self.generate_speech(output))
+                history.append((transcription, output))
+
+        except Exception as e:
+            raise e
+        finally:
+            self.lock.release()
+        return history, history, speech, None, None
+
+
+chat = ChatWrapper(generate_speech, generate_text)
+
+
+def clone_and_stream_voice(name, description, labels):
     voice = clone(
         name=name, description=description, files=["output.wav"], labels=labels
     )
 
-    audio = generate(
-        text=text,
-        voice=voice,
-        model=model,
-        stream=True,
-        stream_chunk_size=2048,
-        latency=1,
-    )
-
-    stream(audio)
+    return voice
 
 
 def get_access_token():
@@ -183,7 +248,6 @@ def combined_function(
     gender,
     use_case,
     model,
-    clone_text,  # Add this new parameter
 ):
     labels = {
         "accent": accent,
@@ -192,17 +256,14 @@ def combined_function(
         "gender": gender,
         "use case": use_case,
     }
-    input_file, output_file, status1 = enhance_audio(recording, upload, audio_type)
-    status1 = "Enhancement complete!"
-    transcript = transcribe_audio_openai(output_file)
+    input_file, output_file, _ = enhance_audio(recording, upload, audio_type)
     if proceed_to_clone:
-        clone_and_stream_voice(
-            name, description, labels, clone_text, model
-        )  # Use clone_text here
-        status2 = "Cloning complete!"
+        voice = clone_and_stream_voice(name, description, labels, model)
     else:
-        status2 = "Voice cloning not performed."
-    return input_file, output_file, status1, transcript, status2
+        voice = "Voice cloning not performed."
+
+    cloned_voice = voice
+    return voice
 
 
 def main():
@@ -223,21 +284,98 @@ def main():
                 choices=["eleven_monolingual_v1", "eleven_multilingual_v1"],
                 label="Model",
             ),
-            Textbox(label="Clone Text"),  # Add this new textbox
         ],
-        outputs=[
-            Audio(type="filepath", label="Original Audio"),
-            Audio(type="filepath", label="Processed Audio"),
-            Textbox(label="Enhancement Status"),
-            Textbox(label="Transcript"),
-            Textbox(label="Cloning Status"),
-        ],
+        outputs=Textbox(label="Cloned Voice"),
         title="Audio Enhancer, Transcriber and Voice Cloner",
         description="Enhance your audio, transcribe it and clone voices using the Dolby API",
         allow_flagging="never",
     )
 
-    iface.launch(inbrowser=True, share=True)
+    # iface.launch(inbrowser=True, share=True)
+
+    # iface_2 = gr.Interface(
+    #     fn=combined_function,
+    #     inputs=[gr.Microphone(label="Speak Your Query")],
+    #     outputs=Textbox(label="Cloned Voice"),
+    #     title="Agent Vinod",
+    #     description="Enhance your audio, transcribe it and clone voices using the Dolby API",
+    #     allow_flagging="never",
+    # )
+    block = gr.Blocks(css=".gradio-container")
+
+    with block:
+        with gr.Row():
+            gr.Markdown("<h3><center>BentoML LangChain Demo</center></h3>")
+
+            openai_api_key_textbox = gr.Textbox(
+                placeholder="Paste your OpenAI API key (sk-...)",
+                show_label=False,
+                lines=1,
+                type="password",
+            )
+
+        chatbot = gr.Chatbot()
+
+        audio = gr.Audio(label="Chatbot Voice", elem_id="chatbox_voice")
+
+        with gr.Row():
+            audio_message = gr.Audio(
+                label="User voice message",
+                source="microphone",
+                type="filepath",
+            )
+
+            text_message = gr.Text(
+                label="User text message",
+                placeholder="Give me 5 gift ideas for my mother",
+            )
+
+        gr.HTML("Demo BentoML application of a LangChain chain.")
+
+        gr.HTML(
+            "<center>Powered by <a href='https://github.com/bentoml/BentoML'>BentoML 🍱</a> and <a href='https://github.com/hwchase17/langchain'>LangChain 🦜️🔗</a></center>"
+        )
+
+        state = gr.State()
+        agent_state = gr.State()
+
+        audio_message.change(
+            user_audio,
+            inputs=[
+                openai_api_key_textbox,
+                audio_message,
+                text_message,
+                state,
+                agent_state,
+            ],
+            outputs=[chatbot, state, audio, audio_message, text_message],
+            show_progress=False,
+        )
+
+        text_message.submit(
+            user_text,
+            inputs=[
+                openai_api_key_textbox,
+                audio_message,
+                text_message,
+                state,
+                agent_state,
+            ],
+            outputs=[chatbot, state, audio, audio_message, text_message],
+            show_progress=False,
+        )
+
+        # openai_api_key_textbox.change(
+        #     set_openai_api_key,
+        #     inputs=[openai_api_key_textbox],
+        #     outputs=[agent_state],
+        #     show_progress=False,
+        # )
+
+    iface_2.launch(inbrowser=True, share=True)
+
+    demo = gr.TabbedInterface([iface, block], ["Text-to-speech", "Agent Vinod"])
+    demo.launch(share=True)
 
 
 if __name__ == "__main__":
