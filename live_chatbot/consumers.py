@@ -111,6 +111,10 @@ class ChatConsumer(WebsocketConsumer):
         audio_file_path = os.path.join(audio_directory, audio_filename)
         transcribed_text = stt_function(audio_file_path)
         print(transcribed_text)
-        llm_response = llm_run_query(transcribed_text['text'])
+        llm_response = llm_run_query(transcribed_text)
+        base64_string = play_generated_audio(llm_response)
         # llm_response.
-        self.send(text_data=json.dumps({"message": llm_response}))
+        self.send(text_data=json.dumps({"message": llm_response , "audio_array": base64_string}))
+
+
+

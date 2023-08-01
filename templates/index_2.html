@@ -118,6 +118,9 @@
 
 <body>
   <div class="container">
+
+    <iframe src="http://192.168.217.162:8501" width="100%" height="600" style="border:none;"></iframe>
+
     <p>
       This is the documentation for the ElevenLabs API. You can use this API
       to use our service programmatically, this is done by using your
@@ -186,6 +189,10 @@
         chatSocket.onmessage = function (e) {
           hideLoadingAnimation();
           const data = JSON.parse(e.data);
+
+          if (data.audio_array) {
+            playReceivedAudio(data.audio_array);
+          }
           console.log("Data ", data);
           addMessage(data.message, "bot");
         };
@@ -193,6 +200,27 @@
         chatSocket.onclose = function (e) {
           console.error("Chat socket closed unexpectedly");
         };
+
+
+        
+        function playReceivedAudio(audioData) {
+          let byteCharacters = atob(audioData);
+        let byteNumbers = Array.prototype.slice.call(byteCharacters).map((char) => char.charCodeAt(0));
+        let byteArray = new Uint8Array(byteNumbers);
+
+        // Create a blob and generate a blob URL
+        let blob = new Blob([byteArray], {type: 'audio/mpeg'}); // change 'audio/mpeg' with the correct mime type of your audio
+        let url = URL.createObjectURL(blob);
+
+        // Create an audio element and play
+        let audio = new Audio(url);
+        audio.play();
+      }
+
+      
+
+      // Simulate the received bytes array (replace this with your actual received bytes array)
+   
 
         function toggleMic() {
           isMicOn = !isMicOn;
@@ -324,6 +352,7 @@
 
 
         // });
+
 
       });
     </script>

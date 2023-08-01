@@ -59,66 +59,28 @@ memory = ConversationBufferMemory(memory_key="chat_history")
 
 
 
+import speech_recognition as sr
+r = sr.Recognizer()           
 
 
-from datasets import load_dataset, Audio
+# Import the AssemblyAI module
+import assemblyai as aai
 
-# English
-stream_data = load_dataset("mozilla-foundation/common_voice_13_0", "en", split="test", streaming=True)
-stream_data = stream_data.cast_column("audio", Audio(sampling_rate=16000))
+# Your API token is already set here
+aai.settings.api_key = "6c7f4d60028e4df9b889b93acb8ed698"
+# 
+# Create a transcriber object.
 
-# audi
-en_sample = next(iter(stream_data))["audio"]["array"]
+# transcript = transcriber.transcribe("https://storage.googleapis.com/aai-web-samples/espn-bears.m4a%22")
 
-# French
-# stream_data = load_dataset("mozilla-foundation/common_voice_13_0", "fr", split="test", streaming=True)
-# stream_data = stream_data.cast_column("audio", Audio(sampling_rate=16000))
-# fr_sample = next(iter(stream_data))["audio"]["array"]
-
-
-from transformers import Wav2Vec2ForCTC, AutoProcessor
-import torch
-
-model_id = "facebook/mms-1b-fl102"
-
-processor = AutoProcessor.from_pretrained(model_id)
-model = Wav2Vec2ForCTC.from_pretrained(model_id)
-
-
-
-
-
-# 'joe keton disapproved of films and buster also had reservations about the media'
-
-
-processor.tokenizer.set_target_lang("fra")
-model.load_adapter("fra")
-
-# inputs = processor(fr_sample, sampling_rate=16_000, return_tensors="pt")
-
-with torch.no_grad():
-    outputs = model(**inputs).logits
-
-ids = torch.argmax(outputs, dim=-1)[0]
-transcription = processor.decode(ids)
-# "ce dernier est volé tout au long de l'histoire romaine"
-processor.tokenizer.vocab.keys()
-print(transcription)
-
-
+transcriber = aai.Transcriber()
 
 def stt_function(audio_path):
     audio_file= open(audio_path, "rb")
-    # inputs = processor(audio_file, sampling_rate=16_000, return_tensors="pt")
-    # with torch.no_grad():
-    #     outputs = model(**inputs).logits
 
-    # ids = torch.argmax(outputs, dim=-1)[0]
-    # transcription = processor.decode(ids)
-    # return transcription
-    transcript = openai.Audio.transcribe("whisper-1", audio_file)
-    print(transcript['text'])
-    return transcript
+    transcript = transcriber.transcribe(audio_path)
+
+    return transcript.text
 
 
 
@@ -188,8 +150,13 @@ Thought: you should always think about what to do
 Action: the action to take, should be one of [Slack: Send Direct Message, Google Meet: Schedule a Meeting, Gmail: Find Email, Gmail: Send Email, Gmail: Send Email]
 Action Input: Checking if all the required information is collected.If you don't have full information ask for it from the user.
 Observation: Yes all the information needed for the tool is collected.
+If the final condition is not met and you dont have all the information then print this:
+Incomplete : [ Print here what you need to ask the user to provide the incomplete information ]
 [ When condition is satisfied then dont print anything else just print this : 
 Final Answer: the final answer to the original input question. ```Example : Send email to [email] with subject [subject] and body [body]```
+]
+[When the user asks something that is not being instructed for you and is something different that automating tasks with Zapier and tools then print this:
+NORMAL ASSISTANT : [ And the answer to the question asked by the user ]  
 ]
 When you have all the required information for the task , then send only the Final Answer as the output.Don't send any other thing as output from these [Action , Thought  , Question , Observation , Action Input]
 
@@ -221,9 +188,22 @@ llm_chain = LLMChain(
 )
 
 
+import base64
+
 def play_generated_audio(text, voice="Bella", model="eleven_monolingual_v1"):
-    audio = generate(text=text, voice=voice, model=model,stream=True)
-    play(audio)
+    audio = generate(text=text, voice=voice, model=model)
+    
+    bytes_array = list(audio)  # Convert audio bytes to a list of integers
+
+    audio_bytes = bytearray(bytes_array) # Your audio bytes here
+
+    # Convert byte array to base64 string
+    base64_bytes = base64.b64encode(audio_bytes)
+    base64_string = base64_bytes.decode('utf-8')
+    return base64_string
+
+my_streamit_prompt = ""
+
 
 
 def llm_run_query(user_input):
@@ -234,14 +214,25 @@ def llm_run_query(user_input):
     print(output)
 
     inputs = re.search("Action Input: (.*)", output)
-    if inputs:
-        action_input_text = inputs.group(1)
-        play_generated_audio(action_input_text)
+    # match_incomplete = re.search("Incomplete : (.*)", output)
+    str = 'Incomplete: What should the subject and body of the email be?'
+    regex = re.compile('Incomplete:\s*(.*)')
+    match_ = regex.search(str)
+    result = match_.group(1) if match_ else ''
+    print("Incomplwt result ",result)  # 
+
+    if match_:
+        # action_input_text = match_incomplete.group(1)
+        action_input_text = match_.group(1)
+        # play_generated_audio(action_input_text)
+        my_streamit_prompt = action_input_text
+        return action_input_text
+
 
     match = re.search("Final Answer: (.*)", output)
     if match:
         final_answer = match.group(1)
-        print(final_answer)
+        print("Final Answer ", final_answer)
         assistant_message = zapier_agent.run(final_answer)
         # play_generated_audio(assistant_message)
 
@@ -254,3 +245,18 @@ def llm_run_query(user_input):
 
     else:
         return "No final answer found, please ask another question or provide more information."
+    
+
+
+from langchain.llms import OpenAI
+from langchain.agents import AgentType, initialize_agent, load_tools
+from langchain.callbacks import StreamlitCallbackHandler
+import streamlit as st
+
+
+if prompt := st.chat_input():
+    st.chat_message("user").write(prompt)
+    with st.chat_message("assistant"):
+        st_callback = StreamlitCallbackHandler(st.container())
+        response = zapier_agent.run(prompt, callbacks=[st_callback])
+        st.write(response)
